@@ -2,7 +2,7 @@ name: Football Bot Run
 
 on:
   schedule:
-    - cron: '0 7 * * *' # รันตอน 7 โมงเช้าของทุกวัน
+    - cron: '0 0 * * *' # รันตอน 7 โมงเช้าของทุกวัน
   workflow_dispatch: # ปุ่มกดรันเอง
 
 jobs:
