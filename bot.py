@@ -1,69 +1,78 @@
+import yfinance as yf
 import requests
-import os
-from datetime import datetime
-import pytz
+import pandas as pd
 
-def send_to_discord(embeds):
-    webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
-    if embeds:
-        requests.post(webhook_url, json={"embeds": embeds})
+# ลิงก์ Discord ของคุณ
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1502609125597773874/mclvaofs8FavFZRuItcX68fYAA-65Fi9HN8wSYtCZ4Hmzqy9zGQ5t22Y4KvmMl9tzN3w"
 
-def main():
-    api_key = os.getenv('FOOTBALL_API_KEY')
-    tz = pytz.timezone('Asia/Bangkok')
-    now = datetime.now(tz)
-    date_str = now.strftime('%d/%m/%Y')
+# รายชื่อหุ้น
+stocks = ["JEPQ", "VOO", "SCHD", "GOOGL", "TSM"]
 
-    # ดึงข้อมูลจาก SofaScore API
-    url = "https://sofascore.p.rapidapi.com/matches/list-by-date"
-    headers = {
-        "x-rapidapi-key": api_key,
-        "x-rapidapi-host": "sofascore.p.rapidapi.com"
-    }
-    params = {"date": date_str}
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        data = response.json()
-        
-        matches = data.get('events', [])
-        found_matches = []
+def run_bot():
+    print("⏳ เริ่มการวิเคราะห์หุ้น...")
+    full_message = "🤖 **บทวิเคราะห์และการแนะนำจุดเข้าซื้อ** 📈\n"
+    
+    for ticker in stocks:
+        try:
+            # ดึงข้อมูลย้อนหลัง 6 เดือน
+            df = yf.download(ticker, period="6mo", progress=False)
+            if df.empty:
+                continue
 
-        for event in matches:
-            # รหัสลีก 17 คือ Premier League อังกฤษ
-            league_id = event.get('tournament', {}).get('uniqueTournament', {}).get('id')
+            # ตรวจสอบโครงสร้างข้อมูล (รองรับ yfinance รูปแบบใหม่)
+            if isinstance(df.columns, pd.MultiIndex):
+                close_prices = df['Close'][ticker]
+                low_prices = df['Low'][ticker]
+            else:
+                close_prices = df['Close']
+                low_prices = df['Low']
+
+            current_price = float(close_prices.iloc[-1])
+            monthly_low = float(low_prices.rolling(window=20).min().iloc[-1])
             
-            if league_id == 17: 
-                home_team = event['homeTeam']['name']
-                away_team = event['awayTeam']['name']
-                
-                # ดึงสกอร์ (ถ้ายังไม่แข่งจะเป็น 0 หรือไม่มีค่า)
-                home_score = event.get('homeScore', {}).get('current', 0)
-                away_score = event.get('awayScore', {}).get('current', 0)
-                
-                # ดึงสถานะ เช่น FT (จบเกม), 75' (นาทีที่แข่ง), หรือเวลาเริ่มแข่ง
-                status = event['status']['description']
-                
-                match_info = f"🏟️ **{home_team}** {home_score} - {away_score}  **{away_team}**\n> สถานะ: `{status}`"
-                found_matches.append(match_info)
+            # คำนวณ RSI
+            rsi_series = calculate_rsi(close_prices)
+            rsi_now = float(rsi_series.iloc[-1])
 
-        if found_matches:
-            description = "\n\n".join(found_matches)
-        else:
-            description = "วันนี้ไม่มีการแข่งขันพรีเมียร์ลีกครับ 🏴󠁧󠁢󠁥󠁮󠁧󠁿"
+            full_message += f"\n🔍 **{ticker}** | ราคา: `${current_price:.2f}`\n"
+            
+            # --- ส่วนการวิเคราะห์ ---
+            if rsi_now < 35:
+                analysis = "🔥 **จุดซื้อที่ดีมาก!** (Oversold)"
+            elif rsi_now < 45:
+                analysis = "✅ **น่าสะสม** ราคาเริ่มย่อตัว"
+            elif rsi_now > 70:
+                analysis = "⚠️ **ระวัง!** (Overbought) ราคาเริ่มแพงไป"
+            else:
+                analysis = "⏳ **ถือรอ/ดูเชิง** ราคายังอยู่กลางทาง"
+            
+            full_message += f"   • สถานะ: {analysis}\n"
+            full_message += f"   • RSI: `{rsi_now:.1f}`\n"
+            
+            # แนะนำจุดซื้อ (ต่ำกว่าราคาปัจจุบัน หรือใกล้จุดต่ำสุดเดือน)
+            target_entry = monthly_low * 1.01 
+            full_message += f"   • 🎯 **จุดเข้าซื้อแนะนำ:** `${target_entry:.2f}`\n"
+            
+            if current_price <= target_entry:
+                full_message += "   🚩 **[ ACTION ]** ราคาถึงจุดที่ควรพิจารณาซื้อ!\n"
 
-        embed = [{
-            "title": "🏆 รายงานผลบอลพรีเมียร์ลีกอังกฤษ",
-            "description": description,
-            "color": 38143, # สีม่วงเข้มสไตล์พรีเมียร์ลีก
-            "footer": {"text": f"อัปเดตล่าสุด: {now.strftime('%H:%M:%S')} (เวลาไทย)"},
-            "thumbnail": {"url": "https://www.premierleague.com/resources/rebrand/v7.129.0/i/elements/pl-main-logo.png"}
-        }]
-        
-        send_to_discord(embed)
-
-    except Exception as e:
-        print(f"เกิดข้อผิดพลาด: {e}")
+        except Exception as e:
+            print(f"Error analyzing {ticker}: {e}")
+            full_message += f"\n❌ {ticker}: วิเคราะห์ขัดข้อง\n"
+            
+    # ส่งเข้า Discord
+    response = requests.post(DISCORD_WEBHOOK_URL, json={"content": full_message})
+    if response.status_code == 204:
+        print("✅ ส่งรายงานสำเร็จ!")
+    else:
+        print(f"❌ ส่งไม่สำเร็จ: {response.status_code}")
 
 if __name__ == "__main__":
-    main()
+    run_bot()
