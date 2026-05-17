@@ -8,24 +8,20 @@ def send_to_discord(embeds):
     if embeds:
         requests.post(webhook_url, json={"embeds": embeds})
 
-def get_matches(api_key, date_obj):
-    # ปรับเป็นรูปแบบ YYYY-MM-DD เพื่อความแม่นยำของ API
-    date_str = date_obj.strftime('%Y-%m-%d')
-    url = "https://sofascore.p.rapidapi.com/matches/list-by-date"
+def get_league_matches(api_key, date_str):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {
         "x-rapidapi-key": api_key,
-        "x-rapidapi-host": "sofascore.p.rapidapi.com"
+        "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
     }
-    params = {"date": date_str}
+    # ถอดตัวแปร season ออก ค้นหาจากรหัสพรีเมียร์ลีก (39) และวันที่โดยตรง
+    params = {"league": "39", "date": date_str}
     
     try:
         response = requests.get(url, headers=headers, params=params)
         data = response.json()
-        events = data.get('events', [])
-        # กรองเฉพาะ Premier League อังกฤษ (ID: 17)
-        return [e for e in events if e.get('tournament', {}).get('uniqueTournament', {}).get('id') == 17]
-    except Exception as e:
-        print(f"Error fetching for {date_str}: {e}")
+        return data.get('response', [])
+    except:
         return []
 
 def main():
@@ -34,37 +30,39 @@ def main():
     today_dt = datetime.now(tz)
     yesterday_dt = today_dt - timedelta(days=1)
 
-    # ดึงข้อมูล 2 วันกันพลาด
-    matches_yesterday = get_matches(api_key, yesterday_dt)
-    matches_today = get_matches(api_key, today_dt)
+    yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
+    today_str = today_dt.strftime('%Y-%m-%d')
+
+    matches_yesterday = get_league_matches(api_key, yesterday_str)
+    matches_today = get_league_matches(api_key, today_str)
     
     all_matches = []
     
-    # รวมผลเมื่อวาน
-    for m in matches_yesterday:
-        home = m['homeTeam']['name']
-        away = m['awayTeam']['name']
-        h_score = m.get('homeScore', {}).get('current', 0)
-        a_score = m.get('awayScore', {}).get('current', 0)
-        status = m['status']['description']
-        all_matches.append(f"⏪ **{yesterday_dt.strftime('%d/%m')}:** {home} {h_score}-{a_score} {away} ({status})")
+    # สรุปผลเมื่อวาน
+    for match in matches_yesterday:
+        teams = match['teams']
+        goals = match['goals']
+        status = match['fixture']['status']['short']
+        home_g = goals['home'] if goals['home'] is not None else 0
+        away_g = goals['away'] if goals['away'] is not None else 0
+        all_matches.append(f"⏪ **{yesterday_dt.strftime('%d/%m')}:** {teams['home']['name']} {home_g}-{away_g} {teams['away']['name']} ({status})")
 
-    # รวมตารางวันนี้
-    for m in matches_today:
-        home = m['homeTeam']['name']
-        away = m['awayTeam']['name']
-        h_score = m.get('homeScore', {}).get('current', 0)
-        a_score = m.get('awayScore', {}).get('current', 0)
-        status = m['status']['description']
-        all_matches.append(f"📅 **{today_dt.strftime('%d/%m')}:** {home} {h_score}-{a_score} {away} ({status})")
+    # สรุปผล/สถานะวันนี้
+    for match in matches_today:
+        teams = match['teams']
+        goals = match['goals']
+        status = match['fixture']['status']['short']
+        home_g = goals['home'] if goals['home'] is not None else 0
+        away_g = goals['away'] if goals['away'] is not None else 0
+        all_matches.append(f"📅 **{today_dt.strftime('%d/%m')}:** {teams['home']['name']} {home_g}-{away_g} {teams['away']['name']} ({status})")
 
     if all_matches:
         description = "\n".join(all_matches)
     else:
-        description = "ไม่พบรายการแข่งขันพรีเมียร์ลีกในช่วงวันนี้และเมื่อวานครับ 🏴󠁧󠁢󠁥󠁮󠁧󠁿"
+        description = "วันนี้และเมื่อวานไม่มีการแข่งขันพรีเมียร์ลีกครับ 🏴󠁧󠁢󠁥󠁮󠁧󠁿"
 
     embed = [{
-        "title": "🏆 รายงานผลบอลพรีเมียร์ลีก",
+        "title": "🏆 รายงานผลบอลพรีเมียร์ลีกอังกฤษ",
         "description": description,
         "color": 38143,
         "footer": {"text": f"อัปเดตล่าสุด: {today_dt.strftime('%H:%M:%S')}"}
